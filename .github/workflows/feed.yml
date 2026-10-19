@@ -30,10 +30,19 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
+      # Until the Instagram key is added, runs stop here quietly instead of failing every three hours.
+      - name: Check the Instagram key is set up
+        id: setup
+        env:
+          KEY: ${{ secrets.INSTAGRAM_TOKEN }}
+        run: |
+          if [ -n "$KEY" ]; then echo "ready=true" >> "$GITHUB_OUTPUT"; else echo "::notice::No INSTAGRAM_TOKEN secret yet, so nothing to do."; fi
+
       - uses: actions/checkout@v4
+        if: steps.setup.outputs.ready == 'true'
 
       - name: Renew the Instagram key (Mondays, or when run by hand)
-        if: github.event.schedule == '41 5 * * 1' || github.event_name == 'workflow_dispatch'
+        if: steps.setup.outputs.ready == 'true' && (github.event.schedule == '41 5 * * 1' || github.event_name == 'workflow_dispatch')
         env:
           OLD: ${{ secrets.INSTAGRAM_TOKEN }}
           GH_TOKEN: ${{ secrets.SECRETS_WRITER }}
@@ -51,27 +60,33 @@ jobs:
           echo "Renewed. The new key lasts $days days."
 
       - uses: actions/setup-node@v4
+        if: steps.setup.outputs.ready == 'true'
         with:
           node-version: 20
           cache: npm
 
       - run: npm ci
+        if: steps.setup.outputs.ready == 'true'
 
       - name: Copy the latest posts
+        if: steps.setup.outputs.ready == 'true'
         env:
           INSTAGRAM_TOKEN: ${{ env.INSTAGRAM_TOKEN || secrets.INSTAGRAM_TOKEN }}
         run: npm run build
 
       - uses: actions/configure-pages@v5
+        if: steps.setup.outputs.ready == 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.setup.outputs.ready == 'true'
         with:
           path: out
       - id: deploy
+        if: steps.setup.outputs.ready == 'true'
         uses: actions/deploy-pages@v4
 
       # GitHub pauses scheduled jobs in a repository with no new commits for 60 days. This keeps it running.
       - name: Keep the schedule switched on
-        if: github.event.schedule == '41 5 * * 1'
+        if: steps.setup.outputs.ready == 'true' && github.event.schedule == '41 5 * * 1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/feed.yml/enable"

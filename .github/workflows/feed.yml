@@ -1,0 +1,77 @@
+# Keeps BOYS IN THE WILD on homeboyspizza.co.uk up to date with Homeboys' Instagram.
+# Every three hours it copies the latest posts to this repository's GitHub Pages site. Every Monday it also renews
+# the Instagram key (it lasts 60 days) and stores the new one back in this repository's secrets.
+# If anything fails, nothing is published, the last good feed stays up, and GitHub emails whoever set this up.
+name: Instagram feed
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [feed.config.json]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write
+
+concurrency:
+  group: instagram-feed
+  cancel-in-progress: false
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Renew the Instagram key (Mondays, or when run by hand)
+        if: github.event.schedule == '41 5 * * 1' || github.event_name == 'workflow_dispatch'
+        env:
+          OLD: ${{ secrets.INSTAGRAM_TOKEN }}
+          GH_TOKEN: ${{ secrets.SECRETS_WRITER }}
+        run: |
+          set -euo pipefail
+          res=$(curl -fsS --get "https://graph.instagram.com/refresh_access_token" \
+            --data-urlencode "grant_type=ig_refresh_token" --data-urlencode "access_token=$OLD") || {
+            echo "::warning::Instagram wouldn't renew the key today (it must be at least a day old). Carrying on with the current one."; exit 0; }
+          new=$(echo "$res" | jq -r '.access_token // empty')
+          days=$(( $(echo "$res" | jq -r '.expires_in // 0') / 86400 ))
+          [ -n "$new" ] || { echo "::error::Instagram didn't return a new key."; exit 1; }
+          echo "::add-mask::$new"
+          gh secret set INSTAGRAM_TOKEN --repo "$GITHUB_REPOSITORY" --body "$new"
+          echo "INSTAGRAM_TOKEN=$new" >> "$GITHUB_ENV"
+          echo "Renewed. The new key lasts $days days."
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Copy the latest posts
+        env:
+          INSTAGRAM_TOKEN: ${{ env.INSTAGRAM_TOKEN || secrets.INSTAGRAM_TOKEN }}
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      # GitHub pauses scheduled jobs in a repository with no new commits for 60 days. This keeps it running.
+      - name: Keep the schedule switched on
+        if: github.event.schedule == '41 5 * * 1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/feed.yml/enable"

@@ -1,0 +1,11 @@
+{
+  "name": "homeboys-instagram-feed",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-feed.mjs"
+  },
+  "dependencies": {
+    "sharp": "0.33.5"
+  }
+}
